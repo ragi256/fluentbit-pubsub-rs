@@ -1,0 +1,44 @@
+services:
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command:
+      - gcloud
+      - beta
+      - emulators
+      - pubsub
+      - start
+      - --host-port=0.0.0.0:8681
+      - --project=e2e-project
+    ports:
+      - "8681:8681"
+  gcloud:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    depends_on:
+      - pubsub-emulator
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8681
+    volumes:
+      - ../:/workspace
+
+  rust-builder:
+    image: docker.io/rust:1.90-bullseye
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace
+
+  fluent-bit:
+    image: fluent/fluent-bit:2.2
+    depends_on:
+      - pubsub-emulator
+    environment:
+      PUBSUB_EMULATOR_HOST: ${EMULATOR_HOST_FOR_CONTAINERS:-pubsub-emulator:8681}
+      RUST_LOG: info
+    volumes:
+      - ../target/e2e-linux/release/libfluent_bit_pubsub_rs.so:/plugin/libfluent_bit_pubsub_rs.so:ro
+      - ./fluent-bit.conf:/test/fluent-bit.conf:ro
+    command:
+      - /fluent-bit/bin/fluent-bit
+      - -e
+      - /plugin/libfluent_bit_pubsub_rs.so
+      - -c
+      - /test/fluent-bit.conf

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+      branches: [main]
+  push:
+      branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run linters
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check release build  
+        run: cargo build --release --verbose
+
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run unit tests
+        run: cargo test --all
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run Pub/Sub emulator as E2E test
+        run: bash scripts/e2e_emulator.sh
