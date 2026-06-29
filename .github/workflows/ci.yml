@@ -37,4 +37,4 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Run Pub/Sub emulator as E2E test
-        run: bash scripts/e2e_emulator.sh
+        run: bash e2e/e2e_emulator.sh

@@ -64,11 +64,7 @@ against the Google Cloud Pub/Sub emulator.
 - Local run:
 
 ```sh
-bash scripts/e2e_emulator.sh
-```
-
-```powershell
-pwsh -File scripts/e2e_emulator.ps1
+bash e2e/e2e_emulator.sh
 ```
 
 What this script does:

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPOSE_FILE="e2e/docker-compose.yml"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PROJECT_ID="e2e-project"
 TOPIC="e2e-topic"
 SUBSCRIPTION="e2e-sub"
@@ -31,12 +33,12 @@ if ! command -v "${CONTAINER_CLI}" >/dev/null 2>&1; then
 fi
 
 run_emulator_api() {
-  PUBSUB_EMULATOR_HOST="127.0.0.1:8681" python3 scripts/pubsub_emulator_api.py "$@"
+  PUBSUB_EMULATOR_HOST="127.0.0.1:8681" python3 "${SCRIPT_DIR}/pubsub_emulator_api.py" "$@"
 }
 
 echo "[1/6] Build Linux shared library for Fluent Bit plugin"
 compose run --rm rust-builder cargo build --release --target-dir target/e2e-linux
-if [[ ! -f target/e2e-linux/release/libfluent_bit_pubsub_rs.so ]]; then
+if [[ ! -f "${REPO_ROOT}/target/e2e-linux/release/libfluent_bit_pubsub_rs.so" ]]; then
   echo "E2E failed: plugin shared library was not generated" >&2
   exit 1
 fi
@@ -46,7 +48,7 @@ compose up -d pubsub-emulator
 
 echo "Wait for emulator to become ready"
 READY=0
-for _ in $(seq 1 20); do
+for _ in $(seq 1 60); do
   if run_emulator_api ping >/dev/null 2>&1; then
     READY=1
     break
