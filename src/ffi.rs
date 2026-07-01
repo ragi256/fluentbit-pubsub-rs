@@ -19,12 +19,14 @@ pub struct flb_plugin_proxy_def {
 }
 
 #[repr(C)]
+#[cfg_attr(test, allow(dead_code))]
 struct flb_api {
     output_get_property: Option<unsafe extern "C" fn(*mut c_char, *mut c_void) -> *mut c_char>,
     _reserved: *mut c_char,
 }
 
 #[repr(C)]
+#[cfg_attr(test, allow(dead_code))]
 struct flbgo_output_plugin {
     _reserved: *mut c_void,
     api: *mut flb_api,

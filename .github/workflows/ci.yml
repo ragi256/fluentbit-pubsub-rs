@@ -2,32 +2,30 @@ name: CI
 
 on:
   pull_request:
-      branches: [main]
-  push:
-      branches: [main]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run linters
         run: |
           cargo fmt --all -- --check
-          cargo clippy --all-targets --all-features
+          cargo clippy --all-targets --all-features -- -D warnings
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - name: Check release build  
+      - uses: actions/checkout@v7
+      - name: Check release build
         run: cargo build --release --verbose
 
   unit-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run unit tests
         run: cargo test --all
 
@@ -35,6 +33,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run Pub/Sub emulator as E2E test
         run: bash e2e/e2e_emulator.sh
+
+  release-build-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            linker: ""
+          - target: aarch64-unknown-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install aarch64 linker
+        if: matrix.linker != ''
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build release shared library
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Verify release artifact
+        run: |
+          test -f target/${{ matrix.target }}/release/libfluent_bit_pubsub_rs.so
+          file target/${{ matrix.target }}/release/libfluent_bit_pubsub_rs.so
