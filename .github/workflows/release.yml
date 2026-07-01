@@ -56,6 +56,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "build-${GITHUB_SHA}" dist/*.tar.gz \
+            --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "Build ${GITHUB_SHA}" \
             --notes "Automated release artifacts for ${GITHUB_SHA}."
