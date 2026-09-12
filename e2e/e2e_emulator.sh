@@ -36,7 +36,7 @@ run_emulator_api() {
   PUBSUB_EMULATOR_HOST="127.0.0.1:8681" python3 "${SCRIPT_DIR}/pubsub_emulator_api.py" "$@"
 }
 
-echo "[1/6] Build Linux shared library for Fluent Bit plugin"
+echo "[1/6] Build native Linux shared library for Fluent Bit plugin"
 compose run --rm rust-builder cargo build --release --target-dir target/e2e-linux
 if [[ ! -f "${REPO_ROOT}/target/e2e-linux/release/libfluent_bit_pubsub_rs.so" ]]; then
   echo "E2E failed: plugin shared library was not generated" >&2
