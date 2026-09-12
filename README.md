@@ -8,6 +8,20 @@ This plugin allows Fluent Bit to send log records directly to Google Cloud Pub/S
 
 - **Rust** (Edition 2024) and **Cargo**
 - **Fluent Bit** (v1.9 or higher is recommended, compiled with dynamic plugin support)
+- **Linux** on `x86_64` or `arm64`
+
+## Target Environment
+
+This repository targets Linux only. The supported production, development, and
+CI/CD targets are:
+
+| CPU architecture | Rust target |
+|------------------|-------------|
+| x86_64 | `x86_64-unknown-linux-gnu` |
+| arm64 | `aarch64-unknown-linux-gnu` |
+
+Non-Linux operating systems are intentionally out of scope. Use Docker for local
+checks when the host machine is not the production-like environment.
 
 ## Build
 
@@ -17,10 +31,37 @@ To build the plugin, run the following command in the project root:
 cargo build --release
 ```
 
-After building, the shared library will be located in the `target/release/` directory:
-- Linux: `target/release/libfluent_bit_pubsub_rs.so`
-- macOS: `target/release/libfluent_bit_pubsub_rs.dylib`
-- Windows: `target/release/fluent_bit_pubsub_rs.dll`
+After building, the Linux shared library will be located at:
+
+```text
+target/release/libfluent_bit_pubsub_rs.so
+```
+
+To build an explicit Linux target:
+
+```sh
+cargo build --release --target x86_64-unknown-linux-gnu
+cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+Cross-building for `aarch64-unknown-linux-gnu` requires the Rust target and an
+aarch64 Linux linker:
+
+```sh
+rustup target add aarch64-unknown-linux-gnu
+sudo apt-get install gcc-aarch64-linux-gnu
+cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+When cross-building `x86_64-unknown-linux-gnu` from an arm64 Linux host, install
+an x86_64 Linux linker and pass it to Cargo:
+
+```sh
+rustup target add x86_64-unknown-linux-gnu
+sudo apt-get install gcc-x86-64-linux-gnu
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+  cargo build --release --target x86_64-unknown-linux-gnu
+```
 
 ## Usage Configuration
 
@@ -69,15 +110,26 @@ bash e2e/e2e_emulator.sh
 
 What this script does:
 
-1. Builds the Linux shared library in Docker (`libfluent_bit_pubsub_rs.so`)
+1. Builds the native Linux shared library in Docker (`libfluent_bit_pubsub_rs.so`)
 2. Starts the Pub/Sub emulator
 3. Creates a topic/subscription in the emulator
 4. Runs Fluent Bit with dummy input and this plugin
 5. Pulls a message from emulator subscription and validates payload
 
-GitHub Actions runs the same script on each PR:
+The Docker images are expected to run on the host Linux architecture, so this is
+the preferred local smoke test for both x86_64 and arm64 machines.
+
+GitHub Actions runs Linux checks on each PR:
 
 - `.github/workflows/ci.yml`
+
+CI/CD policy:
+
+- `cargo fmt`, `cargo clippy`, and unit tests run on Linux.
+- Release shared library builds are checked for both `x86_64-unknown-linux-gnu`
+  and `aarch64-unknown-linux-gnu`.
+- Emulator E2E runs on both x86_64 and arm64 Linux runners.
+- Release artifacts are packaged separately for x86_64 and arm64 Linux.
 
 ## License
 

@@ -23,15 +23,33 @@ jobs:
         run: cargo build --release --verbose
 
   unit-test:
-    runs-on: ubuntu-latest
+    name: Unit test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
       - name: Run unit tests
         run: cargo test --all
 
   e2e-test:
-    runs-on: ubuntu-latest
+    name: E2E (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
       - name: Run Pub/Sub emulator as E2E test
