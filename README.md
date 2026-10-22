@@ -217,6 +217,9 @@ What this script does:
 
 The Docker images are expected to run on the host Linux architecture, so this is
 the preferred local smoke test for both x86_64 and arm64 machines.
+The E2E test uses AWS's official Docker Hub mirror
+(`amazon/aws-for-fluent-bit:3.4.4`) rather than an anonymous ECR Public pull,
+while production can continue to use the equivalent Public ECR image.
 
 GitHub Actions runs Linux checks on each PR:
 

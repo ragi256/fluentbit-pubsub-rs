@@ -68,20 +68,7 @@ run_emulator_api create-topic "${PROJECT_ID}" "${TOPIC}"
 run_emulator_api create-subscription "${PROJECT_ID}" "${SUBSCRIPTION}" "${TOPIC}"
 
 echo "[4/6] Run Fluent Bit with plugin"
-for attempt in $(seq 1 4); do
-  if compose up -d fluent-bit; then
-    break
-  fi
-
-  if [[ "${attempt}" -eq 4 ]]; then
-    echo "E2E failed: could not pull or start aws-for-fluent-bit after ${attempt} attempts" >&2
-    exit 1
-  fi
-
-  retry_delay=$((attempt * 30))
-  echo "Fluent Bit image start failed; retrying in ${retry_delay}s (${attempt}/4)" >&2
-  sleep "${retry_delay}"
-done
+compose up -d fluent-bit
 sleep 8
 
 echo "[5/6] Pull one message from emulator subscription"

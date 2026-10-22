@@ -27,7 +27,9 @@ services:
       - ../:/workspace
 
   fluent-bit:
-    image: public.ecr.aws/aws-observability/aws-for-fluent-bit:3.4.4
+    # AWS publishes this official Docker Hub mirror in addition to ECR Public.
+    # It avoids ECR Public's shared anonymous-pull quota in OSS CI.
+    image: docker.io/amazon/aws-for-fluent-bit:3.4.4
     depends_on:
       - pubsub-emulator
     environment:
