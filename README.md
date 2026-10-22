@@ -158,14 +158,57 @@ Load the compiled plugin into Fluent Bit and configure the `[OUTPUT]` section as
 | `JwtPath` | No | — | Path to a `service_account` JSON key or `external_account` (Workload Identity Federation) configuration JSON. It is read directly; the plugin does not modify process environment variables. |
 | `Jwt` | No | — | Raw `service_account` JSON key or `external_account` configuration JSON. This is intended for a FireLens secret injected as an environment expansion in the Fluent Bit configuration. |
 | `MessageKey` | No | — | Send the named record value as the Pub/Sub message body. String and binary values are sent verbatim; other values are JSON encoded. A missing key is a non-retryable flush error. |
+| `Attributes` | No | `{}` | Fixed Pub/Sub attributes for every message, as a JSON object with string values. They are separate from the message body. Invalid attributes fail initialization. |
+| `Endpoint` | No | Google client default | Pub/Sub endpoint URL, for example `https://asia-northeast1-pubsub.googleapis.com`. Overrides emulator routing when both are configured. |
 | `Timeout` | No | `60000` | Publish timeout in milliseconds. |
-| `DelayThreshold` | No | Pub/Sub client default | Maximum batching delay in milliseconds. Must be a positive integer. |
-| `ByteThreshold` | No | Pub/Sub client default | Batch byte threshold. Must be a positive integer. |
-| `CountThreshold` | No | Pub/Sub client default | Batch message-count threshold. Must be a positive integer. |
+| `DelayThreshold` | No | `10` | Maximum batching delay in milliseconds. Must be a positive integer. |
+| `ByteThreshold` | No | `1000000` | Batch byte threshold. Must be a positive integer. |
+| `CountThreshold` | No | `100` | Batch message-count threshold. Must be a positive integer. |
 | `Debug` | No | `false` | Enable enhanced debug logging (`true` / `false`). |
 
 `Jwt` and `JwtPath` are mutually exclusive. When neither is specified, the
 Google client library uses its normal Application Default Credentials behavior.
+
+The batching defaults above are those of the pinned Google Pub/Sub client. Leaving
+these settings unset delegates batching to that client; `Timeout` still limits
+how long a Fluent Bit flush waits for the published messages.
+
+### Optional attributes and endpoint
+
+```ini
+[OUTPUT]
+    Name        pubsub
+    Match       *
+    Project     your-gcp-project-id
+    Topic       your-pubsub-topic-name
+    Attributes  {"service":"api","environment":"production"}
+    Endpoint    https://asia-northeast1-pubsub.googleapis.com
+```
+
+Attributes can support subscription filtering without changing the JSON body or
+its BigQuery columns. They are fixed per OUTPUT, and are not copied from record
+fields. JSON supports commas and equals signs in attribute values without a
+custom escaping syntax. At initialization the plugin enforces at most 100 entries,
+non-empty keys up to 256 bytes that do not start with `goog`, and values up to
+1024 bytes. These are UTF-8 byte lengths. Attribute bytes contribute to Pub/Sub
+message size and quota usage. See [Pub/Sub attributes](https://docs.cloud.google.com/pubsub/docs/publisher#use_attributes_to_publish_a_message)
+and [quotas and limits](https://docs.cloud.google.com/pubsub/quotas).
+
+An explicit Endpoint changes the destination, but not authentication. Use HTTPS
+for production; HTTP is accepted only when `PUBSUB_EMULATOR_HOST` is set. A URL
+may include a port and a trailing slash, but not credentials, a path, a query,
+or a fragment. If `PUBSUB_EMULATOR_HOST` is non-empty, the plugin uses anonymous
+credentials, with Endpoint taking precedence over that variable for routing.
+Keep `PUBSUB_EMULATOR_HOST` unset in production.
+
+Leaving Endpoint unset preserves the Google client's normal endpoint selection
+(or the existing emulator routing). Selecting a locational or regional endpoint
+changes latency, quota locality, and regional-failure behavior, so choose a region
+deliberately. A regional endpoint such as
+`https://pubsub.asia-northeast1.rep.googleapis.com` also requires a compatible
+message storage policy; it is not interchangeable with a locational endpoint.
+See [Pub/Sub endpoints](https://docs.cloud.google.com/pubsub/docs/reference/service_apis_overview#pubsub_endpoints).
+These options do not enable message ordering.
 
 ### FireLens migration from the Go plugin
 
@@ -213,7 +256,10 @@ What this script does:
 2. Starts the Pub/Sub emulator
 3. Creates a topic/subscription in the emulator
 4. Runs Fluent Bit with dummy input and this plugin
-5. Pulls a message from emulator subscription and validates payload
+5. Verifies the default routing and payload with no attributes
+6. Recreates Fluent Bit with attributes and an explicit endpoint, then validates
+   both payload and attributes. An unusable fallback host proves the explicit
+   endpoint is used.
 
 The Docker images are expected to run on the host Linux architecture, so this is
 the preferred local smoke test for both x86_64 and arm64 machines.
