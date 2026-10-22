@@ -47,14 +47,8 @@ pub unsafe extern "C" fn FLBPluginInit(ctx: *mut c_void) -> c_int {
         }
     };
 
-    log::info!(
-        "[pubsub-rs] plugin parameter project = '{}'",
-        cfg.project.as_deref().unwrap_or("")
-    );
-    log::info!(
-        "[pubsub-rs] plugin parameter topic = '{}'",
-        cfg.topic.as_deref().unwrap_or("")
-    );
+    log::info!("[pubsub-rs] plugin parameter project = '{}'", cfg.project);
+    log::info!("[pubsub-rs] plugin parameter topic = '{}'", cfg.topic);
     log::info!("[pubsub-rs] plugin parameter debug = '{}'", cfg.debug);
     log::info!(
         "[pubsub-rs] PUBSUB_EMULATOR_HOST = '{}'",

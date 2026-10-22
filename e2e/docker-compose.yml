@@ -21,13 +21,13 @@ services:
       - ../:/workspace
 
   rust-builder:
-    image: docker.io/rust:1.90-bullseye
+    image: docker.io/rust:1.98-bookworm
     working_dir: /workspace
     volumes:
       - ../:/workspace
 
   fluent-bit:
-    image: fluent/fluent-bit:2.2
+    image: public.ecr.aws/aws-observability/aws-for-fluent-bit:3.4.4
     depends_on:
       - pubsub-emulator
     environment:

@@ -28,7 +28,7 @@ checks when the host machine is not the production-like environment.
 To build the plugin, run the following command in the project root:
 
 ```sh
-cargo build --release
+cargo build --locked --release
 ```
 
 After building, the Linux shared library will be located at:
@@ -40,8 +40,8 @@ target/release/libfluent_bit_pubsub_rs.so
 To build an explicit Linux target:
 
 ```sh
-cargo build --release --target x86_64-unknown-linux-gnu
-cargo build --release --target aarch64-unknown-linux-gnu
+cargo build --locked --release --target x86_64-unknown-linux-gnu
+cargo build --locked --release --target aarch64-unknown-linux-gnu
 ```
 
 Cross-building for `aarch64-unknown-linux-gnu` requires the Rust target and an
@@ -60,7 +60,7 @@ an x86_64 Linux linker and pass it to Cargo:
 rustup target add x86_64-unknown-linux-gnu
 sudo apt-get install gcc-x86-64-linux-gnu
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
-  cargo build --release --target x86_64-unknown-linux-gnu
+  cargo build --locked --release --target x86_64-unknown-linux-gnu
 ```
 
 ## Release Artifacts
@@ -77,7 +77,7 @@ confirms that the `.so` was produced by this repository's release workflow.
 Example verification:
 
 ```sh
-VERSION=v0.1.0
+VERSION=v0.1.1
 TARGET=x86_64-unknown-linux-gnu
 ASSET="fluent-bit-pubsub-rs-${VERSION}-${TARGET}.so"
 
@@ -97,12 +97,12 @@ When using the plugin in a Docker image build, download and verify it before `do
 
 ```yaml
 steps:
-  - uses: actions/checkout@v7
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
   - name: Download plugin
     env:
       GH_TOKEN: ${{ github.token }}
-      VERSION: v0.1.0
+      VERSION: v0.1.1
       TARGET: x86_64-unknown-linux-gnu
     run: |
       asset="fluent-bit-pubsub-rs-${VERSION}-${TARGET}.so"
@@ -122,8 +122,8 @@ steps:
 To publish a release, create and push a signed tag:
 
 ```sh
-git tag -s v0.1.0
-git push origin v0.1.0
+git tag -s v0.1.1
+git push origin v0.1.1
 ```
 
 ## Usage Configuration
@@ -153,12 +153,48 @@ Load the compiled plugin into Fluent Bit and configure the `[OUTPUT]` section as
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `Project` | Yes | `default-project` | Google Cloud Project ID. |
-| `Topic` | Yes | `default-topic` | Google Cloud Pub/Sub Topic Name. |
-| `JwtPath` | No | | Path to the GCP Service Account JSON key file. Sets `GOOGLE_APPLICATION_CREDENTIALS` internally. |
-| `Jwt` | No | | GCP Service Account credentials as a raw JSON string. If provided, sets `GOOGLE_APPLICATION_CREDENTIALS_JSON` internally. (Use `JwtPath` preferably) |
+| `Project` | Yes | — | Google Cloud Project ID. The plugin refuses to initialize when omitted. |
+| `Topic` | Yes | — | Google Cloud Pub/Sub Topic Name. The plugin refuses to initialize when omitted. |
+| `JwtPath` | No | — | Path to a `service_account` JSON key or `external_account` (Workload Identity Federation) configuration JSON. It is read directly; the plugin does not modify process environment variables. |
+| `Jwt` | No | — | Raw `service_account` JSON key or `external_account` configuration JSON. This is intended for a FireLens secret injected as an environment expansion in the Fluent Bit configuration. |
+| `MessageKey` | No | — | Send the named record value as the Pub/Sub message body. String and binary values are sent verbatim; other values are JSON encoded. A missing key is a non-retryable flush error. |
 | `Timeout` | No | `60000` | Publish timeout in milliseconds. |
+| `DelayThreshold` | No | Pub/Sub client default | Maximum batching delay in milliseconds. Must be a positive integer. |
+| `ByteThreshold` | No | Pub/Sub client default | Batch byte threshold. Must be a positive integer. |
+| `CountThreshold` | No | Pub/Sub client default | Batch message-count threshold. Must be a positive integer. |
 | `Debug` | No | `false` | Enable enhanced debug logging (`true` / `false`). |
+
+`Jwt` and `JwtPath` are mutually exclusive. When neither is specified, the
+Google client library uses its normal Application Default Credentials behavior.
+
+### FireLens migration from the Go plugin
+
+By default, this plugin serializes the complete Fluent Bit record as the Pub/Sub
+message body. This is the natural output-plugin behavior and preserves the Rust
+plugin's existing behavior.
+
+Some Go-plugin deployments wrap a JSON body in a record such as
+`{"data":"{...}"}` before the output stage. To retain that pipeline unchanged,
+set `MessageKey data`:
+
+```ini
+[OUTPUT]
+    Name        pubsub
+    Match       *
+    Project     ${GCP_PROJECT}
+    Topic       ${GCP_TOPIC}
+    Jwt         ${SECURE_GCP_CREDENTIAL}
+    MessageKey  data
+```
+
+That sends the contents of `data` (for example, `{...}`), rather than the outer
+record. It is the appropriate configuration for BigQuery subscriptions whose
+table schema describes the wrapped JSON fields rather than a `data` column.
+
+For ECS on AWS, prefer a short-lived AWS Workload Identity Federation
+`external_account` configuration passed through `JwtPath` (or `Jwt`) over a
+long-lived service-account key. The AWS credentials or task role must still be
+authorized by the WIF provider configuration.
 
 ## Emulator E2E (Local and CI)
 
@@ -189,8 +225,10 @@ GitHub Actions runs Linux checks on each PR:
 CI/CD policy:
 
 - `cargo fmt`, `cargo clippy`, and unit tests run on Linux.
-- Release shared library builds are checked for both `x86_64-unknown-linux-gnu`
-  and `aarch64-unknown-linux-gnu`.
+- Release shared library builds use `rust:1.98-bookworm` for both
+  `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. CI rejects an
+  artifact that requires newer than `GLIBC_2.34`, matching
+  `aws-for-fluent-bit:3.4.4`.
 - Emulator E2E runs on both x86_64 and arm64 Linux runners.
 - Release artifacts are packaged separately for x86_64 and arm64 Linux.
 

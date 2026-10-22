@@ -7,7 +7,7 @@ COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PROJECT_ID="e2e-project"
 TOPIC="e2e-topic"
 SUBSCRIPTION="e2e-sub"
-EXPECTED_TEXT="hello-from-emulator-e2e"
+EXPECTED_PAYLOAD='{"message":"hello-from-emulator-e2e"}'
 CONTAINER_CLI="${CONTAINER_CLI:-docker}"
 E2E_FAILED=1
 
@@ -37,11 +37,14 @@ run_emulator_api() {
 }
 
 echo "[1/6] Build native Linux shared library for Fluent Bit plugin"
-compose run --rm rust-builder cargo build --release --target-dir target/e2e-linux
+compose run --rm rust-builder cargo build --locked --release --target-dir target/e2e-linux
 if [[ ! -f "${REPO_ROOT}/target/e2e-linux/release/libfluent_bit_pubsub_rs.so" ]]; then
   echo "E2E failed: plugin shared library was not generated" >&2
   exit 1
 fi
+
+bash "${REPO_ROOT}/scripts/check-glibc.sh" \
+  "${REPO_ROOT}/target/e2e-linux/release/libfluent_bit_pubsub_rs.so" GLIBC_2.34
 
 echo "[2/6] Start Pub/Sub emulator"
 compose up -d pubsub-emulator
@@ -84,7 +87,7 @@ if [[ -z "${RAW_BASE64}" ]]; then
 fi
 
 DECODED=$(printf '%s' "${RAW_BASE64}" | base64 -d 2>/dev/null || true)
-if [[ "${DECODED}" != *"${EXPECTED_TEXT}"* ]]; then
+if [[ "${DECODED}" != "${EXPECTED_PAYLOAD}" ]]; then
   echo "E2E failed: message payload mismatch" >&2
   echo "Decoded payload: ${DECODED}" >&2
   exit 1
