@@ -1,7 +1,10 @@
-use crate::codec::{convert_to_json_bytes, decode_records};
+use crate::codec::{convert_to_json_bytes, decode_records, record_value_to_payload};
 use crate::config::PluginConfig;
 use crate::error::PluginError;
+use google_cloud_auth::credentials::Credentials;
 use google_cloud_auth::credentials::anonymous::Builder as AnonymousCredentials;
+use google_cloud_auth::credentials::external_account::Builder as ExternalAccountCredentials;
+use google_cloud_auth::credentials::service_account::Builder as ServiceAccountCredentials;
 use google_cloud_gax::error::rpc::Code;
 use google_cloud_pubsub::client::Publisher;
 use google_cloud_pubsub::error::PublishError;
@@ -57,6 +60,7 @@ pub struct PubSubKeeper {
     rt: Runtime,
     publisher: Publisher,
     timeout_duration: Duration,
+    message_key: Option<String>,
 }
 
 impl PubSubKeeper {
@@ -66,34 +70,44 @@ impl PubSubKeeper {
             .build()
             .map_err(|e| PluginError::Init(format!("tokio rt error: {}", e)))?;
 
-        if let Some(jwt_path) = &cfg.jwt_path {
-            unsafe { std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", jwt_path) };
-        } else if let Some(jwt) = &cfg.jwt {
-            // Write JWT to a temporary file, then point GOOGLE_APPLICATION_CREDENTIALS to it
-            // Or use google_cloud_auth's direct JWT loader if supported. For simplicity,
-            // setting GOOGLE_APPLICATION_CREDENTIALS_JSON or writing a fast tmp file.
-            unsafe { std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS_JSON", jwt) };
-        }
-
-        let project = cfg.project.unwrap_or_else(|| "default-project".to_string());
-        let topic_name = cfg.topic.unwrap_or_else(|| "default-topic".to_string());
-        let full_topic_name = format!("projects/{}/topics/{}", project, topic_name);
+        let full_topic_name = format!("projects/{}/topics/{}", cfg.project, cfg.topic);
 
         let mut publisher_builder = Publisher::builder(full_topic_name);
-        if let Ok(emulator_host) = std::env::var("PUBSUB_EMULATOR_HOST") {
+        let emulator_host = std::env::var("PUBSUB_EMULATOR_HOST")
+            .ok()
+            .filter(|host| !host.trim().is_empty());
+        if let Some(emulator_host) = emulator_host {
             let emulator_host = emulator_host.trim();
-            if !emulator_host.is_empty() {
-                let endpoint = if emulator_host.starts_with("http://")
-                    || emulator_host.starts_with("https://")
-                {
+            let endpoint =
+                if emulator_host.starts_with("http://") || emulator_host.starts_with("https://") {
                     emulator_host.to_string()
                 } else {
                     format!("http://{}", emulator_host)
                 };
-                publisher_builder = publisher_builder
-                    .with_endpoint(endpoint)
-                    .with_credentials(AnonymousCredentials::new().build());
+            publisher_builder = publisher_builder
+                .with_endpoint(endpoint)
+                .with_credentials(AnonymousCredentials::new().build());
+        } else {
+            // The external-account credential builder initializes a Tokio-based token
+            // cache. Enter the plugin runtime while building it, without mutating
+            // process-wide environment variables.
+            let credentials = {
+                let _enter = rt.enter();
+                credentials_from_config(&cfg)?
+            };
+            if let Some(credentials) = credentials {
+                publisher_builder = publisher_builder.with_credentials(credentials);
             }
+        }
+
+        if let Some(delay_threshold) = cfg.delay_threshold {
+            publisher_builder = publisher_builder.set_delay_threshold(delay_threshold);
+        }
+        if let Some(byte_threshold) = cfg.byte_threshold {
+            publisher_builder = publisher_builder.set_byte_threshold(byte_threshold);
+        }
+        if let Some(count_threshold) = cfg.count_threshold {
+            publisher_builder = publisher_builder.set_message_count_threshold(count_threshold);
         }
 
         // Wait for connection
@@ -105,6 +119,7 @@ impl PubSubKeeper {
             rt,
             publisher,
             timeout_duration: Duration::from_millis(cfg.timeout),
+            message_key: cfg.message_key,
         })
     }
 
@@ -120,8 +135,11 @@ impl PubSubKeeper {
         for (_ts, record_map) in records {
             // Future improvement: Schema registry for actual Avro support.
             // Currently fallback to JSON bytes format for everything.
-            let payload =
-                convert_to_json_bytes(&record_map).map_err(|e| FlushError::Fatal(e.to_string()))?;
+            let payload = match &self.message_key {
+                Some(key) => record_value_to_payload(&record_map, key),
+                None => convert_to_json_bytes(&record_map),
+            }
+            .map_err(|e| FlushError::Fatal(e.to_string()))?;
 
             let msg = Message::new().set_data(payload);
             awaiters.push(self.publisher.publish(msg));
@@ -152,6 +170,39 @@ impl PubSubKeeper {
     }
 }
 
+fn credentials_from_config(cfg: &PluginConfig) -> Result<Option<Credentials>, PluginError> {
+    let contents = match (&cfg.jwt, &cfg.jwt_path) {
+        (Some(jwt), None) => jwt.clone(),
+        (None, Some(path)) => std::fs::read_to_string(path)
+            .map_err(|e| PluginError::Init(format!("failed to read JwtPath '{}': {}", path, e)))?,
+        (None, None) => return Ok(None),
+        (Some(_), Some(_)) => unreachable!("PluginConfig rejects conflicting credentials"),
+    };
+
+    let credentials_json: serde_json::Value = serde_json::from_str(&contents)
+        .map_err(|e| PluginError::Init(format!("credential JSON is invalid: {}", e)))?;
+    let credential_type = credentials_json
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            PluginError::Init("credential JSON has no string 'type' field".to_string())
+        })?;
+
+    let credentials = match credential_type {
+        "service_account" => ServiceAccountCredentials::new(credentials_json).build(),
+        "external_account" => ExternalAccountCredentials::new(credentials_json).build(),
+        unsupported => {
+            return Err(PluginError::Init(format!(
+                "unsupported credential type '{}'; use service_account or external_account",
+                unsupported
+            )));
+        }
+    }
+    .map_err(|e| PluginError::Init(format!("failed to configure credentials: {}", e)))?;
+
+    Ok(Some(credentials))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +210,43 @@ mod tests {
     use google_cloud_pubsub::Error;
     use google_cloud_pubsub::error::PublishError;
     use std::sync::Arc;
+
+    fn config_with_jwt(jwt: &str) -> PluginConfig {
+        PluginConfig {
+            project: "project".to_string(),
+            topic: "topic".to_string(),
+            jwt: Some(jwt.to_string()),
+            jwt_path: None,
+            message_key: None,
+            debug: false,
+            timeout: 1_000,
+            delay_threshold: None,
+            byte_threshold: None,
+            count_threshold: None,
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_raw_credential_json() {
+        let error = credentials_from_config(&config_with_jwt("not-json")).unwrap_err();
+        assert!(error.to_string().contains("credential JSON is invalid"));
+    }
+
+    #[test]
+    fn accepts_wif_external_account_json_without_environment_mutation() {
+        let runtime = Runtime::new().unwrap();
+        let _enter = runtime.enter();
+        let credentials = credentials_from_config(&config_with_jwt(
+            r#"{
+                "type": "external_account",
+                "audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/providers/aws",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "token_url": "https://sts.googleapis.com/v1/token",
+                "credential_source": {"file": "/var/run/secrets/token"}
+            }"#,
+        ));
+        assert!(credentials.unwrap().is_some());
+    }
 
     #[test]
     fn test_classify_rpc_retryable() {

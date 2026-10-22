@@ -21,13 +21,15 @@ services:
       - ../:/workspace
 
   rust-builder:
-    image: docker.io/rust:1.90-bullseye
+    image: docker.io/rust:1.98-bookworm
     working_dir: /workspace
     volumes:
       - ../:/workspace
 
   fluent-bit:
-    image: fluent/fluent-bit:2.2
+    # AWS publishes this official Docker Hub mirror in addition to ECR Public.
+    # It avoids ECR Public's shared anonymous-pull quota in OSS CI.
+    image: docker.io/amazon/aws-for-fluent-bit:3.4.4
     depends_on:
       - pubsub-emulator
     environment:

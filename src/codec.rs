@@ -88,6 +88,29 @@ pub fn convert_to_json_bytes(record: &HashMap<String, Value>) -> Result<Vec<u8>,
     serde_json::to_vec(&json).map_err(|e| PluginError::Codec(format!("Serialize error: {}", e)))
 }
 
+/// Return the value of `key` in a form suitable for Pub/Sub message data.
+///
+/// String and binary values are sent verbatim. Other MessagePack values are
+/// JSON encoded, which makes the option useful for structured records too.
+pub fn record_value_to_payload(
+    record: &HashMap<String, Value>,
+    key: &str,
+) -> Result<Vec<u8>, PluginError> {
+    let value = record.get(key).ok_or_else(|| {
+        PluginError::Codec(format!("MessageKey '{}' is missing from record", key))
+    })?;
+
+    match value {
+        Value::String(value) => value
+            .as_str()
+            .map(|value| value.as_bytes().to_vec())
+            .ok_or_else(|| PluginError::Codec(format!("MessageKey '{}' is not valid UTF-8", key))),
+        Value::Binary(value) => Ok(value.clone()),
+        value => serde_json::to_vec(&rmp_to_json(value))
+            .map_err(|e| PluginError::Codec(format!("Serialize error: {}", e))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +226,33 @@ mod tests {
 
         assert_eq!(parsed_json["field1"], "value1");
         assert_eq!(parsed_json["field2"], 100);
+    }
+
+    #[test]
+    fn message_key_string_is_sent_verbatim() {
+        let mut record = HashMap::new();
+        record.insert(
+            "data".to_string(),
+            Value::String("{\"message\":\"hello\"}".into()),
+        );
+
+        assert_eq!(
+            record_value_to_payload(&record, "data").unwrap(),
+            br#"{"message":"hello"}"#
+        );
+    }
+
+    #[test]
+    fn message_key_non_string_is_json_encoded() {
+        let mut record = HashMap::new();
+        record.insert("data".to_string(), Value::Integer(42.into()));
+
+        assert_eq!(record_value_to_payload(&record, "data").unwrap(), b"42");
+    }
+
+    #[test]
+    fn missing_message_key_is_an_error() {
+        let error = record_value_to_payload(&HashMap::new(), "data").unwrap_err();
+        assert!(error.to_string().contains("MessageKey 'data' is missing"));
     }
 }
