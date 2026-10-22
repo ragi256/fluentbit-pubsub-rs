@@ -6,7 +6,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PROJECT_ID="e2e-project"
 TOPIC="e2e-topic"
-SUBSCRIPTION="e2e-sub"
 EXPECTED_PAYLOAD='{"message":"hello-from-emulator-e2e"}'
 CONTAINER_CLI="${CONTAINER_CLI:-docker}"
 E2E_FAILED=1
@@ -65,34 +64,42 @@ fi
 
 echo "[3/6] Create topic and subscription in emulator"
 run_emulator_api create-topic "${PROJECT_ID}" "${TOPIC}"
-run_emulator_api create-subscription "${PROJECT_ID}" "${SUBSCRIPTION}" "${TOPIC}"
 
-echo "[4/6] Run Fluent Bit with plugin"
-compose up -d fluent-bit
-sleep 8
+run_case() {
+  local subscription=$1
+  local config_file=$2
+  local emulator_host=$3
+  local expected_attributes=$4
+  local received_message=""
 
-echo "[5/6] Pull one message from emulator subscription"
-RAW_BASE64=""
-for _ in $(seq 1 20); do
-  RAW_BASE64=$(run_emulator_api pull "${PROJECT_ID}" "${SUBSCRIPTION}" | tr -d '\r\n')
-  if [[ -n "${RAW_BASE64}" ]]; then
-    break
+  run_emulator_api create-subscription "${PROJECT_ID}" "${subscription}" "${TOPIC}"
+  E2E_CONFIG_FILE="${config_file}" EMULATOR_HOST_FOR_CONTAINERS="${emulator_host}" \
+    compose up -d --no-deps --force-recreate fluent-bit
+
+  for _ in $(seq 1 30); do
+    received_message=$(run_emulator_api pull-message "${PROJECT_ID}" "${subscription}")
+    if [[ -n "${received_message}" ]]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -z "${received_message}" ]]; then
+    echo "E2E failed: no message was received for ${subscription}" >&2
+    return 1
   fi
-  sleep 1
-done
 
-if [[ -z "${RAW_BASE64}" ]]; then
-  echo "E2E failed: no message was received from emulator" >&2
-  exit 1
-fi
+  run_emulator_api validate-message "${received_message}" "${EXPECTED_PAYLOAD}" "${expected_attributes}"
+}
 
-DECODED=$(printf '%s' "${RAW_BASE64}" | base64 -d 2>/dev/null || true)
-if [[ "${DECODED}" != "${EXPECTED_PAYLOAD}" ]]; then
-  echo "E2E failed: message payload mismatch" >&2
-  echo "Decoded payload: ${DECODED}" >&2
-  exit 1
-fi
+echo "[4/6] Verify default routing and messages without attributes"
+run_case e2e-default fluent-bit.conf "${EMULATOR_HOST_FOR_CONTAINERS:-pubsub-emulator:8681}" '{}'
+
+echo "[5/6] Verify attributes and explicit endpoint routing"
+# An unusable fallback host proves the plugin actually uses Endpoint, while
+# PUBSUB_EMULATOR_HOST keeps the emulator's anonymous authentication enabled.
+run_case e2e-options fluent-bit-options.conf unused.invalid:8681 \
+  '{"environment":"e2e","source":"firelens","description":"comma,equals=ok"}'
 
 echo "[6/6] E2E succeeded"
-echo "Decoded payload: ${DECODED}"
 E2E_FAILED=0
