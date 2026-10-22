@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import os
 import sys
@@ -66,9 +67,9 @@ def main() -> int:
             )
             return 0
 
-        if cmd == "pull":
+        if cmd in ("pull", "pull-message"):
             if len(sys.argv) != 4:
-                print("usage: pull <project> <subscription>", file=sys.stderr)
+                print(f"usage: {cmd} <project> <subscription>", file=sys.stderr)
                 return 2
             project, sub = sys.argv[2], sys.argv[3]
             body = call(
@@ -80,7 +81,22 @@ def main() -> int:
             if not msgs:
                 print("")
                 return 0
-            print(msgs[0].get("message", {}).get("data", ""))
+            message = msgs[0].get("message", {})
+            print(json.dumps(message) if cmd == "pull-message" else message.get("data", ""))
+            return 0
+
+        if cmd == "validate-message":
+            if len(sys.argv) != 5:
+                print("usage: validate-message <message-json> <expected-data> <expected-attributes-json>", file=sys.stderr)
+                return 2
+            message = json.loads(sys.argv[2])
+            data = base64.b64decode(message.get("data", ""), validate=True).decode("utf-8")
+            if data != sys.argv[3]:
+                raise ValueError(f"message payload mismatch: {data!r}")
+            attributes = message.get("attributes", {})
+            if attributes != json.loads(sys.argv[4]):
+                raise ValueError(f"message attributes mismatch: {attributes!r}")
+            print(f"Validated payload: {data}; attributes: {json.dumps(attributes)}")
             return 0
 
         print(f"unknown command: {cmd}", file=sys.stderr)

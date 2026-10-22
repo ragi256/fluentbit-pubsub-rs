@@ -9,6 +9,7 @@ use google_cloud_gax::error::rpc::Code;
 use google_cloud_pubsub::client::Publisher;
 use google_cloud_pubsub::error::PublishError;
 use google_cloud_pubsub::model::Message;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::time::timeout;
@@ -61,6 +62,7 @@ pub struct PubSubKeeper {
     publisher: Publisher,
     timeout_duration: Duration,
     message_key: Option<String>,
+    attributes: HashMap<String, String>,
 }
 
 impl PubSubKeeper {
@@ -76,17 +78,12 @@ impl PubSubKeeper {
         let emulator_host = std::env::var("PUBSUB_EMULATOR_HOST")
             .ok()
             .filter(|host| !host.trim().is_empty());
-        if let Some(emulator_host) = emulator_host {
-            let emulator_host = emulator_host.trim();
-            let endpoint =
-                if emulator_host.starts_with("http://") || emulator_host.starts_with("https://") {
-                    emulator_host.to_string()
-                } else {
-                    format!("http://{}", emulator_host)
-                };
-            publisher_builder = publisher_builder
-                .with_endpoint(endpoint)
-                .with_credentials(AnonymousCredentials::new().build());
+        if let Some(endpoint) = cfg.publisher_endpoint(emulator_host.as_deref())? {
+            publisher_builder = publisher_builder.with_endpoint(endpoint);
+        }
+        if emulator_host.is_some() {
+            publisher_builder =
+                publisher_builder.with_credentials(AnonymousCredentials::new().build());
         } else {
             // The external-account credential builder initializes a Tokio-based token
             // cache. Enter the plugin runtime while building it, without mutating
@@ -120,6 +117,7 @@ impl PubSubKeeper {
             publisher,
             timeout_duration: Duration::from_millis(cfg.timeout),
             message_key: cfg.message_key,
+            attributes: cfg.attributes,
         })
     }
 
@@ -133,15 +131,15 @@ impl PubSubKeeper {
         let mut awaiters = Vec::with_capacity(records.len());
 
         for (_ts, record_map) in records {
-            // Future improvement: Schema registry for actual Avro support.
-            // Currently fallback to JSON bytes format for everything.
             let payload = match &self.message_key {
                 Some(key) => record_value_to_payload(&record_map, key),
                 None => convert_to_json_bytes(&record_map),
             }
             .map_err(|e| FlushError::Fatal(e.to_string()))?;
 
-            let msg = Message::new().set_data(payload);
+            let msg = Message::new()
+                .set_data(payload)
+                .set_attributes(self.attributes.clone());
             awaiters.push(self.publisher.publish(msg));
         }
 
@@ -218,6 +216,8 @@ mod tests {
             jwt: Some(jwt.to_string()),
             jwt_path: None,
             message_key: None,
+            attributes: HashMap::new(),
+            endpoint: None,
             debug: false,
             timeout: 1_000,
             delay_threshold: None,
