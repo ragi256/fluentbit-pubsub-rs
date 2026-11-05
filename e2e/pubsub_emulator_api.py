@@ -67,6 +67,32 @@ def main() -> int:
             )
             return 0
 
+        if cmd == "delete-subscription":
+            if len(sys.argv) != 4:
+                print("usage: delete-subscription <project> <subscription>", file=sys.stderr)
+                return 2
+            project, sub = sys.argv[2], sys.argv[3]
+            call("DELETE", f"/v1/projects/{project}/subscriptions/{sub}")
+            return 0
+
+        if cmd == "verify-count":
+            if len(sys.argv) != 5:
+                print("usage: verify-count <project> <subscription> <minimum-count>", file=sys.stderr)
+                return 2
+            project, sub = sys.argv[2], sys.argv[3]
+            minimum = int(sys.argv[4])
+            path = f"/v1/projects/{project}/subscriptions/{sub}"
+            count = 0
+            while count < minimum:
+                body = call("POST", f"{path}:pull", {"maxMessages": 1000, "returnImmediately": True})
+                messages = body.get("receivedMessages", [])
+                if not messages:
+                    raise RuntimeError(f"{sub}: received {count} messages, expected at least {minimum}")
+                call("POST", f"{path}:acknowledge", {"ackIds": [item["ackId"] for item in messages]})
+                count += len(messages)
+            print(f"{sub}: received and acknowledged {count} messages")
+            return 0
+
         if cmd in ("pull", "pull-message"):
             if len(sys.argv) != 4:
                 print(f"usage: {cmd} <project> <subscription>", file=sys.stderr)

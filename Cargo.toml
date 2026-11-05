@@ -1,10 +1,15 @@
 [package]
 name = "fluent-bit-pubsub-rs"
-version = "0.1.1"
+version = "0.1.3"
 edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[example]]
+name = "allocator_probe"
+path = "e2e/allocator_probe.rs"
+crate-type = ["cdylib"]
 
 [dependencies]
 env_logger = "0.11.9"
