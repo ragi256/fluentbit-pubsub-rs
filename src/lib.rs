@@ -1,8 +1,10 @@
 #![allow(clippy::missing_safety_doc)]
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::{Arc, LazyLock, Mutex};
 
+#[cfg(target_os = "linux")]
+mod allocator;
 mod codec;
 mod config;
 mod error;
@@ -24,12 +26,9 @@ pub unsafe extern "C" fn FLBPluginRegister(ctx: *mut c_void) -> c_int {
         (*def).proxy = FLB_PROXY_GOLANG;
         (*def).flags = 0;
 
-        let name = CString::new("pubsub").unwrap();
-        let desc = CString::new("output pubsub").unwrap();
-
-        // Use libc strdup so Fluent Bit can free it or just leak it since Go plugin leaks it
-        (*def).name = libc::strdup(name.as_ptr());
-        (*def).description = libc::strdup(desc.as_ptr());
+        // Fluent Bit copies the name and borrows the description until it unloads the plugin.
+        (*def).name = c"pubsub".as_ptr().cast_mut();
+        (*def).description = c"output pubsub".as_ptr().cast_mut();
         (*def).event_type = 0;
     }
     0

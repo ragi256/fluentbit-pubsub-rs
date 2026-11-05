@@ -77,7 +77,7 @@ confirms that the `.so` was produced by this repository's release workflow.
 Example verification:
 
 ```sh
-VERSION=v0.1.1
+VERSION=v0.1.3
 TARGET=x86_64-unknown-linux-gnu
 ASSET="fluent-bit-pubsub-rs-${VERSION}-${TARGET}.so"
 
@@ -102,7 +102,7 @@ steps:
   - name: Download plugin
     env:
       GH_TOKEN: ${{ github.token }}
-      VERSION: v0.1.1
+      VERSION: v0.1.3
       TARGET: x86_64-unknown-linux-gnu
     run: |
       asset="fluent-bit-pubsub-rs-${VERSION}-${TARGET}.so"
@@ -253,13 +253,17 @@ bash e2e/e2e_emulator.sh
 What this script does:
 
 1. Builds the native Linux shared library in Docker (`libfluent_bit_pubsub_rs.so`)
-2. Starts the Pub/Sub emulator
-3. Creates a topic/subscription in the emulator
-4. Runs Fluent Bit with dummy input and this plugin
-5. Verifies the default routing and payload with no attributes
-6. Recreates Fluent Bit with attributes and an explicit endpoint, then validates
+2. Loads an allocator probe into Fluent Bit and checks that allocations honor their alignment
+3. Starts the Pub/Sub emulator
+4. Creates a topic/subscription in the emulator
+5. Runs Fluent Bit with dummy input and this plugin
+6. Verifies the default routing and payload with no attributes
+7. Recreates Fluent Bit with attributes and an explicit endpoint, then validates
    both payload and attributes. An unusable fallback host proves the explicit
    endpoint is used.
+8. Starts fresh Fluent Bit processes at an input rate of 1,000 records per second.
+   Each process must stay up for 40 seconds and deliver at least 10,000 messages
+   to the emulator. The test runs five times on x86_64 and once on arm64.
 
 The Docker images are expected to run on the host Linux architecture, so this is
 the preferred local smoke test for both x86_64 and arm64 machines.

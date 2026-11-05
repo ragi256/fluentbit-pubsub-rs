@@ -73,6 +73,7 @@ pub fn get_config_key(ctx: *mut c_void, key: &str) -> Option<String> {
     if val_ptr.is_null() {
         return None;
     }
+    // The property belongs to Fluent Bit. Copy it into a Rust-owned string.
     let val = unsafe { CStr::from_ptr(val_ptr) }
         .to_string_lossy()
         .into_owned();
