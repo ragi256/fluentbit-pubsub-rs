@@ -1,7 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
-use std::sync::{Arc, LazyLock, Mutex};
 
 #[cfg(target_os = "linux")]
 mod allocator;
@@ -15,8 +14,11 @@ use config::PluginConfig;
 use ffi::*;
 use pubsub::PubSubKeeper;
 
-// Global state mimicking the Go plugin's `var plugin Keeper`
-static KEEPER: LazyLock<Mutex<Option<Arc<PubSubKeeper>>>> = LazyLock::new(|| Mutex::new(None));
+// Fluent Bit can flush the same output concurrently from multiple workers.
+const _: fn() = || {
+    fn assert_sync<T: Sync>() {}
+    assert_sync::<PubSubKeeper>();
+};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FLBPluginRegister(ctx: *mut c_void) -> c_int {
@@ -29,13 +31,21 @@ pub unsafe extern "C" fn FLBPluginRegister(ctx: *mut c_void) -> c_int {
         // Fluent Bit copies the name and borrows the description until it unloads the plugin.
         (*def).name = c"pubsub".as_ptr().cast_mut();
         (*def).description = c"output pubsub".as_ptr().cast_mut();
-        (*def).event_type = 0;
     }
     0
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FLBPluginInit(ctx: *mut c_void) -> c_int {
+    let plugin = ctx.cast::<flbgo_output_plugin>();
+    if plugin.is_null() {
+        return FLB_ERROR;
+    }
+    let proxy_context = unsafe { (*plugin).context };
+    if proxy_context.is_null() {
+        return FLB_ERROR;
+    }
+
     env_logger::try_init().ok();
 
     let cfg = match PluginConfig::load(ctx) {
@@ -62,29 +72,31 @@ pub unsafe extern "C" fn FLBPluginInit(ctx: *mut c_void) -> c_int {
         }
     };
 
-    if let Ok(mut g) = KEEPER.lock() {
-        *g = Some(Arc::new(keeper));
+    // Fluent Bit passes this pointer to the instance's flush and exit callbacks.
+    unsafe {
+        (*proxy_context).remote_context = Box::into_raw(Box::new(keeper)).cast();
     }
 
     FLB_OK
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn FLBPluginFlush(
+pub unsafe extern "C" fn FLBPluginFlushCtx(
+    ctx: *mut c_void,
     data: *const c_void,
-    length: c_int,
+    length: usize,
     tag: *const c_char,
 ) -> c_int {
     log::info!("[pubsub-rs] flush called length={}", length);
-    let keeper_arc = {
-        let g = KEEPER.lock().unwrap();
-        match &*g {
-            Some(k) => k.clone(),
-            None => return FLB_ERROR,
-        }
+    let Some(keeper) = (unsafe { ctx.cast::<PubSubKeeper>().as_ref() }) else {
+        return FLB_ERROR;
     };
 
-    let slice = unsafe { std::slice::from_raw_parts(data as *const u8, length as usize) };
+    let slice = match length {
+        0 => &[],
+        _ if data.is_null() || length > isize::MAX as usize => return FLB_ERROR,
+        _ => unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) },
+    };
 
     let tagname = if !tag.is_null() {
         unsafe { CStr::from_ptr(tag) }
@@ -94,7 +106,7 @@ pub unsafe extern "C" fn FLBPluginFlush(
         String::new()
     };
 
-    match keeper_arc.flush(slice, &tagname) {
+    match keeper.flush(slice, &tagname) {
         Ok(_) => FLB_OK,
         Err(pubsub::FlushError::Retryable(e)) => {
             log::error!("[err][publish][retry] {:?}", e);
@@ -108,9 +120,30 @@ pub unsafe extern "C" fn FLBPluginFlush(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn FLBPluginExit() -> c_int {
-    if let Some(keeper) = KEEPER.lock().ok().and_then(|mut g| g.take()) {
+pub unsafe extern "C" fn FLBPluginExitCtx(ctx: *mut c_void) -> c_int {
+    if !ctx.is_null() {
+        // Fluent Bit stops the instance's output workers before calling exit.
+        let keeper = unsafe { Box::from_raw(ctx.cast::<PubSubKeeper>()) };
         keeper.stop();
     }
     FLB_OK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr::{null, null_mut};
+
+    #[test]
+    fn flush_rejects_null_context() {
+        assert_eq!(
+            unsafe { FLBPluginFlushCtx(null_mut(), null(), 0, null()) },
+            FLB_ERROR
+        );
+    }
+
+    #[test]
+    fn exit_accepts_null_context() {
+        assert_eq!(unsafe { FLBPluginExitCtx(null_mut()) }, FLB_OK);
+    }
 }
