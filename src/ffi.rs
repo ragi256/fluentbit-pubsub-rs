@@ -8,6 +8,8 @@ pub const FLB_RETRY: c_int = 2;
 pub const FLB_PROXY_OUTPUT_PLUGIN: c_int = 2;
 pub const FLB_PROXY_GOLANG: c_int = 11;
 
+// Older Go proxies only provide this prefix. Newer hosts zero-initialize the
+// remaining fields and default to log events.
 #[repr(C)]
 pub struct flb_plugin_proxy_def {
     pub ptype: c_int,
@@ -15,7 +17,6 @@ pub struct flb_plugin_proxy_def {
     pub flags: c_int,
     pub name: *mut c_char,
     pub description: *mut c_char,
-    pub event_type: c_int,
 }
 
 #[repr(C)]
@@ -26,12 +27,17 @@ struct flb_api {
 }
 
 #[repr(C)]
-#[cfg_attr(test, allow(dead_code))]
-struct flbgo_output_plugin {
+pub(crate) struct flbgo_output_plugin {
     _reserved: *mut c_void,
     api: *mut flb_api,
     o_ins: *mut c_void,
-    _context: *mut c_void,
+    pub context: *mut flb_plugin_proxy_context,
+}
+
+#[repr(C)]
+pub(crate) struct flb_plugin_proxy_context {
+    pub remote_context: *mut c_void,
+    _proxy: *mut c_void,
 }
 
 #[cfg(not(test))]

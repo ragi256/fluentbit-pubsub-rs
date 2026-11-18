@@ -98,9 +98,10 @@ def main() -> int:
                 print(f"usage: {cmd} <project> <subscription>", file=sys.stderr)
                 return 2
             project, sub = sys.argv[2], sys.argv[3]
+            path = f"/v1/projects/{project}/subscriptions/{sub}"
             body = call(
                 "POST",
-                f"/v1/projects/{project}/subscriptions/{sub}:pull",
+                f"{path}:pull",
                 {"maxMessages": 1, "returnImmediately": True},
             )
             msgs = body.get("receivedMessages", [])
@@ -108,7 +109,11 @@ def main() -> int:
                 print("")
                 return 0
             message = msgs[0].get("message", {})
-            print(json.dumps(message) if cmd == "pull-message" else message.get("data", ""))
+            if cmd == "pull-message":
+                call("POST", f"{path}:acknowledge", {"ackIds": [msgs[0]["ackId"]]})
+                print(json.dumps(message))
+            else:
+                print(message.get("data", ""))
             return 0
 
         if cmd == "validate-message":

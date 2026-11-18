@@ -7,8 +7,8 @@ This plugin allows Fluent Bit to send log records directly to Google Cloud Pub/S
 ## Requirements
 
 - **Rust** (Edition 2024) and **Cargo**
-- **Fluent Bit** (v1.9 or higher is recommended, compiled with dynamic plugin support)
-- **Linux** on `x86_64` or `arm64`
+- **Fluent Bit** with dynamic plugin support (v2.0.7 or later for multiple Pub/Sub outputs)
+- **Linux** on `x86_64` or `arm64` (use glibc 2.34 or later with the release binaries)
 
 ## Target Environment
 
@@ -149,6 +149,9 @@ Load the compiled plugin into Fluent Bit and configure the `[OUTPUT]` section as
     Debug     false
 ```
 
+You can configure multiple `[OUTPUT]` sections with `Name pubsub` in one Fluent
+Bit process. Each uses its own topic, message key, and other plugin settings.
+
 ### Configuration Parameters
 
 | Parameter | Required | Default | Description |
@@ -261,7 +264,10 @@ What this script does:
 7. Recreates Fluent Bit with attributes and an explicit endpoint, then validates
    both payload and attributes. An unusable fallback host proves the explicit
    endpoint is used.
-8. Starts fresh Fluent Bit processes at an input rate of 1,000 records per second.
+8. Runs two Pub/Sub outputs with different topics, message keys, and attributes
+   in one Fluent Bit process. Checks for the expected message on each topic,
+   polls both subscriptions for extra messages, and checks for a clean shutdown.
+9. Starts fresh Fluent Bit processes at an input rate of 1,000 records per second.
    Each process must stay up for 40 seconds and deliver at least 10,000 messages
    to the emulator. The test runs five times on x86_64 and once on arm64.
 
